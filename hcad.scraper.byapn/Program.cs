@@ -6,9 +6,12 @@ using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Support.UI;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Net;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -19,6 +22,7 @@ namespace hcad.scraper.byapn
     public class DataModelAPN
     {
         public string SearchedAPN { get; set; }
+        public string Address { get; set; }
         public string SubjectCity { get; set; }
         public string SubjectState { get; set; }
         public string SubjectZip { get; set; }
@@ -56,6 +60,119 @@ namespace hcad.scraper.byapn
     {
         static Settings settings = new Settings();
         static List<DataModelAPN> entries = new List<DataModelAPN>();
+        public static bool CheckForLatestDrivers()
+        {
+            KillAlreadyRunningDriver();
+            var versionInfo = FileVersionInfo.GetVersionInfo(@"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe");
+            string currentChromeVersion = versionInfo.FileVersion;
+
+            bool hasLatestDriver = false;
+            string currentVersion = string.Empty;
+            string versionFileName = "version.txt";
+            if (File.Exists(versionFileName))
+                currentVersion = File.ReadAllText(versionFileName);
+            else
+                File.Create("versionFileName");
+
+
+            HtmlWeb web = new HtmlWeb();
+            var doc = web.Load("https://sites.google.com/a/chromium.org/chromedriver/downloads");
+            for (int i = 1; i <= 3; i++)
+            {
+                var linkNode = doc.DocumentNode.SelectSingleNode($"//*[@id=\"sites-canvas-main-content\"]/table/tbody/tr/td/div/div[1]/ul/li[{i}]/a");
+                if (linkNode != null)
+                {
+                    var latestVersion = linkNode.InnerText.Replace("ChromeDriver ", "");
+                    if (latestVersion.Split('.')[0] == currentChromeVersion.Split('.')[0])
+                    {
+                        if (latestVersion == currentVersion)
+                        {
+                            Console.WriteLine("You have the latest version of chrome driver");
+                            hasLatestDriver = true;
+                            break;
+                        }
+                        else
+                        {
+                            // Download drivers
+                            try
+                            {
+                                using (var client = new WebClient())
+                                {
+                                    client.DownloadFile($"https://chromedriver.storage.googleapis.com/{latestVersion}/chromedriver_win32.zip", "chromedriver_win32.zip");
+                                    if (File.Exists("chromedriver.exe"))
+                                    {
+                                        KillAlreadyRunningDriver();
+
+                                        File.Delete("chromedriver.exe");
+                                    }
+                                    ZipFile.ExtractToDirectory("chromedriver_win32.zip", Environment.CurrentDirectory);
+                                    File.WriteAllText(versionFileName, latestVersion);
+                                    hasLatestDriver = true;
+                                }
+                                Console.WriteLine("Driver downloaded successfully.");
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine("Unable to download latest version. Reason: " + ex.Message);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Downloading latest version {latestVersion}");
+                        if (latestVersion.Split('.')[0] == currentChromeVersion.Split('.')[0])
+                        {
+                            try
+                            {
+                                using (var client = new WebClient())
+                                {
+                                    client.DownloadFile($"https://chromedriver.storage.googleapis.com/{latestVersion}/chromedriver_win32.zip", "chromedriver_win32.zip");
+                                    if (File.Exists("chromedriver.exe"))
+                                    {
+                                        Process[] chromeDriverProcesses = Process.GetProcessesByName("chromedriver");
+                                        foreach (var chromeDriverProcess in chromeDriverProcesses)
+                                        {
+                                            var path = chromeDriverProcess.MainModule.FileName;
+                                            if (path == Path.Combine(Environment.CurrentDirectory, "chromedriver.exe"))
+                                            {
+                                                chromeDriverProcess.Kill();
+                                            }
+                                        }
+
+                                        File.Delete("chromedriver.exe");
+                                    }
+                                    ZipFile.ExtractToDirectory("chromedriver_win32.zip", Environment.CurrentDirectory);
+                                    File.WriteAllText(versionFileName, latestVersion);
+                                    hasLatestDriver = true;
+                                }
+                                Console.WriteLine("Driver downloaded successfully.");
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine("Unable to download latest version. Reason: " + ex.Message);
+                            }
+                        }
+
+                    }
+                }
+            }
+
+            return hasLatestDriver;
+        }
+
+        private static void KillAlreadyRunningDriver()
+        {
+            Process[] chromeDriverProcesses = Process.GetProcessesByName("chromedriver");
+            foreach (var chromeDriverProcess in chromeDriverProcesses)
+            {
+                var path = chromeDriverProcess.MainModule.FileName;
+                if (path == Path.Combine(Environment.CurrentDirectory, "chromedriver.exe"))
+                {
+                    chromeDriverProcess.Kill();
+                }
+            }
+        }
+        
         static void Main(string[] args)
         {
             Console.WriteLine(DateTime.Now);
@@ -65,7 +182,7 @@ namespace hcad.scraper.byapn
 
             try
             {
-
+                CheckForLatestDrivers();
                 int num2 = (apns.Count() + settings.entriesProcessedInSingleThread - 1) / settings.entriesProcessedInSingleThread;
                 List<Task> taskList = new List<Task>();
                 for (int index = 1; index <= num2; ++index)
@@ -347,7 +464,7 @@ namespace hcad.scraper.byapn
                                         {
                                             var sub2 = new HtmlDocument();
                                             sub2.LoadHtml(pieces.LastOrDefault());
-
+                                            model.Address = pieces.FirstOrDefault();
                                             var citystatezip = sub2.DocumentNode.InnerText.Replace("\n", "").Replace("\r", "").Trim();
                                             var cszParts = citystatezip.Split(new string[] { " " }, StringSplitOptions.RemoveEmptyEntries);
                                             if (cszParts.Length == 3)
@@ -664,8 +781,9 @@ namespace hcad.scraper.byapn
                     }
                 }
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                Console.WriteLine("Unable to continue. Reason: "+ex.Message);
             }
 
         }
